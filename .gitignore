@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# virtual env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# env files
+.env
+
+# embeddings / cache / models
+*.bin
+*.pt
+*.model
+
+# OS
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+
+# qdrant local storage (если вдруг появится локально)
+storage/
+
+data/*
