@@ -31,4 +31,4 @@ Thumbs.db
 storage/
 
 data/*
-data/README.md
+!data/README.md
