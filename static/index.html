@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG — Поиск по документам</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Unbounded:wght@300;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0c0f;
+    --surface:   #111419;
+    --border:    #1e2530;
+    --border-hi: #2e3d50;
+    --accent:    #00d4ff;
+    --accent2:   #00ff9d;
+    --warn:      #ff6b35;
+    --muted:     #3a4a5c;
+    --text:      #c8d8e8;
+    --text-dim:  #5a7080;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Unbounded', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+    overflow: hidden;
+  }
+
+  /* noise overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 9999; opacity: .5;
+  }
+
+  /* scanlines */
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,.08) 2px,
+      rgba(0,0,0,.08) 4px
+    );
+    pointer-events: none; z-index: 9998;
+  }
+
+  /* ── LAYOUT ── */
+  .app {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    grid-template-rows: 48px 1fr;
+    height: 100vh;
+  }
+
+  /* ── TOPBAR ── */
+  .topbar {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 16px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .topbar-logo {
+    font-family: var(--display);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .15em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+  .topbar-sep { width: 1px; height: 20px; background: var(--border); }
+  .topbar-tag {
+    font-size: 10px; color: var(--text-dim);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .topbar-status {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--text-dim);
+  }
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--muted);
+    transition: background .3s, box-shadow .3s;
+  }
+  .dot.ok  { background: var(--accent2); box-shadow: 0 0 8px var(--accent2); }
+  .dot.err { background: var(--warn);   box-shadow: 0 0 8px var(--warn); }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-label {
+    font-size: 9px; font-weight: 500;
+    letter-spacing: .18em; text-transform: uppercase;
+    color: var(--text-dim); margin-bottom: 12px;
+  }
+
+  /* upload zone */
+  .upload-zone {
+    border: 1px dashed var(--border-hi);
+    border-radius: 4px;
+    padding: 20px 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: rgba(0,212,255,.04); }
+  .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+  .upload-icon {
+    font-size: 22px; margin-bottom: 8px;
+    display: block; color: var(--text-dim);
+    transition: color .2s;
+  }
+  .upload-zone:hover .upload-icon { color: var(--accent); }
+  .upload-hint { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+  .upload-hint span { color: var(--text); }
+
+  /* file info */
+  .file-info {
+    display: none;
+    background: rgba(0,212,255,.06);
+    border: 1px solid rgba(0,212,255,.2);
+    border-radius: 4px;
+    padding: 10px 12px;
+    font-size: 11px;
+  }
+  .file-info.show { display: block; }
+  .file-name { color: var(--accent); font-weight: 500; word-break: break-all; }
+  .file-meta { color: var(--text-dim); margin-top: 3px; }
+
+  /* progress bar */
+  .progress-wrap { display: none; margin-top: 10px; }
+  .progress-wrap.show { display: block; }
+  .progress-bar {
+    height: 2px; background: var(--border);
+    border-radius: 1px; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width .3s;
+    box-shadow: 0 0 8px var(--accent);
+  }
+  .progress-label { font-size: 10px; color: var(--text-dim); margin-top: 5px; }
+
+  /* reset btn */
+  .btn-reset {
+    display: none;
+    width: 100%; margin-top: 10px;
+    padding: 7px;
+    background: transparent;
+    border: 1px solid var(--border-hi);
+    border-radius: 3px;
+    color: var(--text-dim);
+    font-family: var(--mono); font-size: 11px;
+    cursor: pointer; letter-spacing: .05em;
+    transition: border-color .2s, color .2s;
+  }
+  .btn-reset:hover { border-color: var(--warn); color: var(--warn); }
+  .btn-reset.show { display: block; }
+
+  /* sidebar stats */
+  .stat-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .stat-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 10px;
+  }
+  .stat-val {
+    font-family: var(--display);
+    font-size: 18px; font-weight: 300;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .stat-key { font-size: 9px; color: var(--text-dim); margin-top: 4px; text-transform: uppercase; letter-spacing: .1em; }
+
+  /* history list */
+  .history-list {
+    flex: 1; overflow-y: auto;
+    padding: 8px;
+  }
+  .history-list::-webkit-scrollbar { width: 3px; }
+  .history-list::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+
+  .hist-item {
+    padding: 8px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    margin-bottom: 2px;
+    border: 1px solid transparent;
+    transition: background .15s, border-color .15s;
+  }
+  .hist-item:hover { background: rgba(255,255,255,.03); border-color: var(--border); }
+  .hist-item.active { background: rgba(0,212,255,.06); border-color: rgba(0,212,255,.2); }
+  .hist-q { font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hist-conf {
+    font-size: 10px; margin-top: 2px;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .conf-bar-wrap { flex: 1; height: 2px; background: var(--border); border-radius: 1px; overflow: hidden; }
+  .conf-bar { height: 100%; border-radius: 1px; }
+  .conf-val { color: var(--text-dim); min-width: 30px; text-align: right; }
+
+  /* ── MAIN ── */
+  .main {
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* answer area */
+  .answer-area {
+    flex: 1; overflow-y: auto;
+    padding: 24px 32px;
+  }
+  .answer-area::-webkit-scrollbar { width: 3px; }
+  .answer-area::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+
+  /* empty state */
+  .empty-state {
+    height: 100%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 12px; color: var(--text-dim);
+    text-align: center;
+    animation: fadeIn .6s ease;
+  }
+  .empty-glyph {
+    font-size: 48px; opacity: .2;
+    animation: pulse 3s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: .15; } 50% { opacity: .3; } }
+  .empty-title {
+    font-family: var(--display);
+    font-size: 13px; font-weight: 300;
+    letter-spacing: .1em; text-transform: uppercase;
+  }
+  .empty-sub { font-size: 11px; max-width: 280px; line-height: 1.7; }
+
+  /* result card */
+  .result-card {
+    display: none;
+    animation: slideUp .35s cubic-bezier(.2,.8,.3,1);
+  }
+  .result-card.show { display: block; }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .result-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 20px;
+  }
+  .result-prompt {
+    font-family: var(--display);
+    font-size: 11px; font-weight: 300;
+    color: var(--text-dim);
+    letter-spacing: .05em;
+    flex: 1;
+  }
+  .result-conf-badge {
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 10px; font-weight: 500;
+    letter-spacing: .05em;
+    border: 1px solid;
+  }
+
+  .answer-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 4px 4px 0;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+    position: relative;
+  }
+  .answer-label {
+    font-size: 9px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 10px; font-weight: 500;
+  }
+  .answer-text {
+    font-size: 15px;
+    color: #e8f4ff;
+    font-family: var(--display);
+    font-weight: 300;
+    line-height: 1.6;
+    letter-spacing: .01em;
+  }
+
+  /* context accordion */
+  .ctx-toggle {
+    display: flex; align-items: center; gap: 8px;
+    cursor: pointer;
+    color: var(--text-dim); font-size: 11px;
+    padding: 8px 0;
+    user-select: none;
+    letter-spacing: .05em;
+  }
+  .ctx-toggle:hover { color: var(--text); }
+  .ctx-arrow {
+    font-size: 10px;
+    transition: transform .2s;
+    display: inline-block;
+  }
+  .ctx-toggle.open .ctx-arrow { transform: rotate(90deg); }
+  .ctx-body {
+    display: none;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 14px 16px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 260px;
+    overflow-y: auto;
+    animation: fadeIn .2s ease;
+  }
+  .ctx-body.show { display: block; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  /* ── INPUT BAR ── */
+  .input-bar {
+    border-top: 1px solid var(--border);
+    padding: 14px 20px;
+    background: var(--surface);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .prompt-prefix {
+    color: var(--accent2); font-size: 14px;
+    flex-shrink: 0; line-height: 1;
+  }
+  .input-wrap { flex: 1; position: relative; }
+  #question-input {
+    width: 100%;
+    background: transparent;
+    border: none; outline: none;
+    font-family: var(--mono); font-size: 13px;
+    color: var(--text);
+    caret-color: var(--accent);
+    padding: 6px 0;
+  }
+  #question-input::placeholder { color: var(--muted); }
+  .input-underline {
+    height: 1px;
+    background: linear-gradient(90deg, var(--accent) var(--ul, 0%), var(--border) var(--ul, 0%));
+    transition: --ul .3s;
+  }
+  #question-input:focus ~ .input-underline {
+    background: linear-gradient(90deg, var(--accent) 100%, var(--border) 100%);
+  }
+  .btn-ask {
+    padding: 8px 18px;
+    background: transparent;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    color: var(--accent);
+    font-family: var(--mono); font-size: 12px;
+    letter-spacing: .08em;
+    cursor: pointer;
+    transition: background .2s, color .2s, box-shadow .2s;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .btn-ask:hover:not(:disabled) {
+    background: var(--accent);
+    color: var(--bg);
+    box-shadow: 0 0 16px rgba(0,212,255,.35);
+  }
+  .btn-ask:disabled { opacity: .35; cursor: not-allowed; }
+
+  /* loading shimmer */
+  .loading-row {
+    display: none;
+    gap: 6px; align-items: center;
+    padding: 20px 0;
+    color: var(--text-dim); font-size: 11px;
+  }
+  .loading-row.show { display: flex; }
+  .spinner {
+    width: 14px; height: 14px;
+    border: 1.5px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* toast */
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 16px;
+    font-size: 12px;
+    max-width: 320px;
+    transform: translateY(20px); opacity: 0;
+    transition: transform .25s, opacity .25s;
+    z-index: 1000;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.err { border-color: var(--warn); color: var(--warn); }
+  .toast.ok  { border-color: var(--accent2); color: var(--accent2); }
+
+  /* kbd hint */
+  .kbd { display: inline-block; padding: 1px 5px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; font-size: 10px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <span class="topbar-logo">RAG</span>
+    <span class="topbar-sep"></span>
+    <span class="topbar-tag">Document Intelligence System</span>
+    <div class="topbar-status">
+      <div class="dot" id="ollama-dot"></div>
+      <span id="ollama-label">ollama</span>
+      <span style="margin: 0 4px; color: var(--border)">|</span>
+      <div class="dot" id="qdrant-dot"></div>
+      <span id="qdrant-label">qdrant</span>
+    </div>
+  </header>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+
+    <!-- upload -->
+    <div class="sidebar-section">
+      <div class="section-label">Документ</div>
+
+      <div class="upload-zone" id="upload-zone">
+        <input type="file" id="file-input" accept=".pdf,.docx,.txt">
+        <span class="upload-icon">⬆</span>
+        <div class="upload-hint">
+          <span>Перетащите файл</span> или нажмите<br>
+          PDF · DOCX · TXT
+        </div>
+      </div>
+
+      <div class="file-info" id="file-info">
+        <div class="file-name" id="file-name">—</div>
+        <div class="file-meta" id="file-meta">—</div>
+      </div>
+
+      <div class="progress-wrap" id="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="progress-label" id="progress-label">Индексирование...</div>
+      </div>
+
+      <button class="btn-reset" id="btn-reset">✕ Сбросить документ</button>
+    </div>
+
+    <!-- stats -->
+    <div class="sidebar-section">
+      <div class="section-label">Статистика</div>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-val" id="stat-chunks">—</div>
+          <div class="stat-key">Чанков</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val" id="stat-questions">0</div>
+          <div class="stat-key">Вопросов</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val" id="stat-avg-conf">—</div>
+          <div class="stat-key">Ср. уверен.</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val" id="stat-no-data">0</div>
+          <div class="stat-key">Нет данных</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- history -->
+    <div class="section-label" style="padding: 12px 16px 4px; font-size:9px; letter-spacing:.18em; text-transform:uppercase; color:var(--text-dim);">История</div>
+    <div class="history-list" id="history-list"></div>
+
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <div class="answer-area" id="answer-area">
+
+      <div class="empty-state" id="empty-state">
+        <span class="empty-glyph">◈</span>
+        <div class="empty-title">Загрузите документ</div>
+        <div class="empty-sub">Загрузите PDF, DOCX или TXT-файл, затем задайте вопрос на естественном языке</div>
+      </div>
+
+      <div class="loading-row" id="loading-row">
+        <div class="spinner"></div>
+        <span id="loading-text">Поиск по документу...</span>
+      </div>
+
+      <div class="result-card" id="result-card">
+        <div class="result-header">
+          <div class="result-prompt" id="result-question">—</div>
+          <div class="result-conf-badge" id="conf-badge">—</div>
+        </div>
+
+        <div class="answer-block">
+          <div class="answer-label">↳ ответ</div>
+          <div class="answer-text" id="answer-text">—</div>
+        </div>
+
+        <div class="ctx-toggle" id="ctx-toggle">
+          <span class="ctx-arrow">▶</span>
+          <span>Контекст поиска</span>
+        </div>
+        <div class="ctx-body" id="ctx-body"></div>
+      </div>
+
+    </div>
+
+    <div class="input-bar">
+      <span class="prompt-prefix">›_</span>
+      <div class="input-wrap">
+        <input type="text" id="question-input" placeholder="Задайте вопрос по документу… (Enter или Ctrl+Enter)">
+        <div class="input-underline"></div>
+      </div>
+      <button class="btn-ask" id="btn-ask" disabled>Спросить</button>
+    </div>
+
+  </main>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = 'http://localhost:8000';
+
+// ── state ──
+const state = {
+  indexed: false,
+  questions: 0,
+  noData: 0,
+  confs: [],
+  history: [],
+  activeIdx: -1,
+};
+
+// ── refs ──
+const $ = id => document.getElementById(id);
+
+// ── init ──
+checkStatus();
+setInterval(checkStatus, 5000);
+
+// ── upload ──
+const zone  = $('upload-zone');
+const input = $('file-input');
+
+zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag'); });
+zone.addEventListener('dragleave', ()  => zone.classList.remove('drag'));
+zone.addEventListener('drop', e => {
+  e.preventDefault(); zone.classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f) uploadFile(f);
+});
+input.addEventListener('change', () => { if (input.files[0]) uploadFile(input.files[0]); });
+
+$('btn-reset').addEventListener('click', resetDoc);
+
+async function uploadFile(file) {
+  setUploading(true);
+  animateProgress();
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  try {
+    const r = await fetch(`${API}/api/upload`, { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Ошибка загрузки');
+
+    state.indexed = true;
+    showFileInfo(data.file, data.chunks);
+    updateStats();
+    $('btn-ask').disabled = false;
+    showToast(`✓ ${data.file} — ${data.chunks} чанков`, 'ok');
+  } catch(e) {
+    showToast(e.message, 'err');
+  } finally {
+    setUploading(false);
+  }
+}
+
+function setUploading(on) {
+  $('progress-wrap').classList.toggle('show', on);
+  zone.style.display = on ? 'none' : '';
+  if (!on) $('progress-fill').style.width = '0%';
+}
+
+function animateProgress() {
+  const fill = $('progress-fill');
+  const labels = ['Парсинг...','Chunking...','Embeddings...','Загрузка в Qdrant...'];
+  let pct = 0; let li = 0;
+  const id = setInterval(() => {
+    if (pct >= 90) { clearInterval(id); return; }
+    pct += Math.random() * 12;
+    fill.style.width = Math.min(pct, 90) + '%';
+    if (li < labels.length) $('progress-label').textContent = labels[li++];
+  }, 600);
+  setTimeout(() => {
+    clearInterval(id);
+    fill.style.width = '100%';
+    $('progress-label').textContent = 'Готово';
+  }, 4500);
+}
+
+function showFileInfo(name, chunks) {
+  $('file-info').classList.add('show');
+  $('file-name').textContent = name;
+  $('file-meta').textContent = `${chunks} чанков`;
+  $('btn-reset').classList.add('show');
+  $('stat-chunks').textContent = chunks;
+}
+
+async function resetDoc() {
+  await fetch(`${API}/api/reset`, { method: 'DELETE' });
+  state.indexed = false;
+  state.questions = 0; state.noData = 0; state.confs = []; state.history = [];
+  $('file-info').classList.remove('show');
+  $('btn-reset').classList.remove('show');
+  zone.style.display = '';
+  $('progress-wrap').classList.remove('show');
+  $('btn-ask').disabled = true;
+  $('result-card').classList.remove('show');
+  $('empty-state').style.display = '';
+  $('history-list').innerHTML = '';
+  input.value = '';
+  updateStats();
+  showToast('Документ сброшен', 'ok');
+}
+
+// ── ask ──
+$('question-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') ask();
+});
+$('btn-ask').addEventListener('click', ask);
+
+async function ask() {
+  const q = $('question-input').value.trim();
+  if (!q || !state.indexed) return;
+
+  $('question-input').value = '';
+  $('empty-state').style.display = 'none';
+  $('result-card').classList.remove('show');
+  $('loading-row').classList.add('show');
+  $('btn-ask').disabled = true;
+
+  const steps = ['Переписываю запрос...','Векторный поиск...','BM25 поиск...','RRF fusion...','Reranking...','Генерация ответа...'];
+  let si = 0;
+  const tid = setInterval(() => {
+    if (si < steps.length) $('loading-text').textContent = steps[si++];
+  }, 700);
+
+  try {
+    const r = await fetch(`${API}/api/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Ошибка');
+
+    clearInterval(tid);
+    $('loading-row').classList.remove('show');
+    showResult(q, data);
+    addToHistory(q, data);
+    updateStats(data);
+  } catch(e) {
+    clearInterval(tid);
+    $('loading-row').classList.remove('show');
+    showToast(e.message, 'err');
+  } finally {
+    $('btn-ask').disabled = false;
+    $('question-input').focus();
+  }
+}
+
+function showResult(q, data) {
+  const conf = data.confidence;
+  const noData = data.answer === 'Нет данных' || data.answer === 'Ошибка соединения с LLM';
+
+  $('result-question').textContent = '/ ' + q;
+
+  // Лимит символов: для коротких Q&A — 500, для длинных summary — без лимита
+  // Если ответ >500 и confidence > 0 — это скорее всего summary, показываем полностью
+  const raw = data.answer || 'Нет данных';
+  const answerText = (raw.length > 500 && data.confidence > 0) ? raw : raw.slice(0, 500);
+  $('answer-text').textContent = answerText;
+
+  // Контекст — в аккордеон, закрываем его при новом вопросе
+  $('ctx-body').textContent = data.context || '—';
+  $('ctx-body').classList.remove('show');
+  $('ctx-toggle').classList.remove('open');
+
+  const badge = $('conf-badge');
+  if (noData) {
+    badge.textContent = 'нет данных';
+    badge.style.borderColor = 'var(--warn)';
+    badge.style.color = 'var(--warn)';
+  } else {
+    badge.textContent = `conf ${(conf * 100).toFixed(0)}%`;
+    const hue = conf > .7 ? 'var(--accent2)' : conf > .4 ? 'var(--accent)' : 'var(--warn)';
+    badge.style.borderColor = hue;
+    badge.style.color = hue;
+  }
+
+  $('result-card').classList.add('show');
+  $('answer-area').scrollTop = 0;
+}
+
+// ── context toggle ──
+$('ctx-toggle').addEventListener('click', () => {
+  $('ctx-toggle').classList.toggle('open');
+  $('ctx-body').classList.toggle('show');
+});
+
+// ── history ──
+function addToHistory(q, data) {
+  state.history.unshift({ q, data });
+  state.activeIdx = 0;
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = $('history-list');
+  list.innerHTML = '';
+  state.history.forEach((item, i) => {
+    const div = document.createElement('div');
+    div.className = 'hist-item' + (i === state.activeIdx ? ' active' : '');
+    const conf = item.data.confidence;
+    const color = conf > .7 ? '#00ff9d' : conf > .4 ? '#00d4ff' : '#ff6b35';
+    div.innerHTML = `
+      <div class="hist-q">${item.q}</div>
+      <div class="hist-conf">
+        <div class="conf-bar-wrap"><div class="conf-bar" style="width:${conf*100}%;background:${color}"></div></div>
+        <span class="conf-val">${(conf*100).toFixed(0)}%</span>
+      </div>`;
+    div.addEventListener('click', () => {
+      state.activeIdx = i;
+      renderHistory();
+      showResult(item.q, item.data);
+    });
+    list.appendChild(div);
+  });
+}
+
+// ── stats ──
+function updateStats(data) {
+  if (data) {
+    state.questions++;
+    state.confs.push(data.confidence);
+    if (data.answer === 'Нет данных') state.noData++;
+  }
+  $('stat-questions').textContent = state.questions;
+  $('stat-no-data').textContent = state.noData;
+  if (state.confs.length) {
+    const avg = state.confs.reduce((a,b)=>a+b,0)/state.confs.length;
+    $('stat-avg-conf').textContent = (avg*100).toFixed(0)+'%';
+  } else {
+    $('stat-avg-conf').textContent = '—';
+  }
+  if (!state.indexed) {
+    $('stat-chunks').textContent = '—';
+  }
+}
+
+// ── status check ──
+async function checkStatus() {
+  // check qdrant
+  try {
+    const r = await fetch(`${API}/api/status`);
+    if (r.ok) {
+      const d = await r.json();
+      setDot('qdrant', true);
+      if (d.indexed && !state.indexed) {
+        state.indexed = true;
+        showFileInfo(d.file_name, d.chunks);
+        $('btn-ask').disabled = false;
+      }
+    } else {
+      setDot('qdrant', false);
+    }
+  } catch { setDot('qdrant', false); }
+
+  // check ollama (try /api/tags)
+  try {
+    const r = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(2000) });
+    setDot('ollama', r.ok);
+  } catch { setDot('ollama', false); }
+}
+
+function setDot(name, ok) {
+  const dot = $(name + '-dot');
+  dot.classList.toggle('ok', ok);
+  dot.classList.toggle('err', !ok);
+}
+
+// ── toast ──
+let toastTimer;
+function showToast(msg, type = '') {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>

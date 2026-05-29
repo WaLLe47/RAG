@@ -1,28 +1,19 @@
-import re
-from typing import List
-
-
-def normalize_text(text: str) -> str:
-    text = text.replace("\xa0", " ")
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def chunk_text(text: str, chunk_size: int = 800):
-
-    paragraphs = text.split("\n")
+def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> list[str]:
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
 
     chunks = []
     current = ""
 
     for p in paragraphs:
-        if len(current) + len(p) < chunk_size:
-            current += " " + p
+        if len(current) + len(p) + 1 <= chunk_size:
+            current = (current + "\n" + p).strip()
         else:
-            chunks.append(current.strip())
-            current = p
+            if current:
+                chunks.append(current)
+            overlap_text = chunks[-1][-overlap:] if chunks else ""
+            current = (overlap_text + "\n" + p).strip()
 
     if current:
-        chunks.append(current.strip())
+        chunks.append(current)
 
     return chunks

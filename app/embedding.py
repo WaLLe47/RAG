@@ -1,18 +1,26 @@
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer(
-    "BAAI/bge-m3",
-    trust_remote_code=True
-)
+_model: SentenceTransformer | None = None
+
+MODEL_NAME = "BAAI/bge-m3"
+VECTOR_SIZE = 1024
 
 
-def get_embedding(text: str):
-    if not text:
+def _get_model() -> SentenceTransformer:
+    global _model
+    if _model is None:
+        _model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
+    return _model
+
+
+def get_embedding(text: str) -> list[float]:
+    if not text or not text.strip():
+        raise ValueError("Empty text")
+    return _get_model().encode(text, normalize_embeddings=True).tolist()
+
+
+def get_embeddings(texts: list[str]) -> list[list[float]]:
+    if not texts:
         return []
-
-    vector = model.encode(
-        text,
-        normalize_embeddings=True
-    )
-
-    return vector.tolist()
+    vectors = _get_model().encode(texts, normalize_embeddings=True)
+    return [v.tolist() for v in vectors]

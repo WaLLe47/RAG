@@ -2,31 +2,36 @@ from pypdf import PdfReader
 import docx
 
 
-def load_pdf(path: str):
-    reader = PdfReader(path)
-
+def load_pdf(path: str) -> str:
     text = ""
+    reader = PdfReader(path)
     for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
-
+        t = page.extract_text()
+        if t:
+            text += t + "\n"
     return text
 
 
-def load_docx(path: str):
+def load_docx(path: str) -> str:
     doc = docx.Document(path)
-
-    return "\n".join(
-        p.text for p in doc.paragraphs if p.text
-    )
+    return "\n".join(p.text for p in doc.paragraphs if p.text)
 
 
-def load_file(path: str):
-    if path.endswith(".pdf"):
-        return load_pdf(path)
+def load_txt(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
 
-    if path.endswith(".docx"):
-        return load_docx(path)
 
-    raise Exception("Unsupported file format")
+LOADERS = {
+    ".pdf": load_pdf,
+    ".docx": load_docx,
+    ".txt": load_txt,
+}
+
+
+def load_file(path: str) -> str:
+    for ext, loader in LOADERS.items():
+        if path.lower().endswith(ext):
+            return loader(path)
+    supported = ", ".join(LOADERS.keys())
+    raise ValueError(f"Unsupported format. Supported: {supported}")

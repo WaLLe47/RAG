@@ -1,78 +1,43 @@
-import hashlib
-import re
+import uuid
+
 from loader import load_file
-from embedding import get_embedding
+from chunker import chunk_text
+from embedding import get_embeddings
 from qdrant_db import client, COLLECTION_NAME
 
+BATCH_SIZE = 256
 
-def normalize(text: str) -> str:
-    text = text.replace("\xa0", " ")
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n+", "\n", text)
 
-    return text.strip()
+def make_id(text: str, i: int) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{i}:{text}"))
 
-def chunk_text(
-    text: str,
-    chunk_size: int = 700,
-    overlap: int = 120
-):
-    paragraphs = [
-        p.strip()
-        for p in text.split("\n")
-        if p.strip()
-    ]
 
-    chunks = []
-    current = ""
-
-    for p in paragraphs:
-
-        if len(current) + len(p) <= chunk_size:
-            current += "\n" + p
-
-        else:
-            chunks.append(current.strip())
-
-            tail = current[-overlap:]
-
-            current = tail + "\n" + p
-
-    if current.strip():
-        chunks.append(current.strip())
-
-    return chunks
-
-def make_id(source: str, chunk_id: int, text: str) -> str:
-    raw = f"{source}:{chunk_id}:{text}"
-    return hashlib.md5(raw.encode("utf-8")).hexdigest()
-
-def add_file(file_path: str):
-    text = normalize(load_file(file_path))
+def build_index(file_path: str) -> None:
+    text = load_file(file_path)
     chunks = chunk_text(text)
 
-    points = []
+    if not chunks:
+        print(f"[ingest] No chunks extracted from {file_path}")
+        return
 
-    for i, chunk in enumerate(chunks):
-        vector = get_embedding(chunk)
+    vectors = get_embeddings(chunks)
 
-        points.append({
-            "id": make_id(file_path, i, chunk),
-            "vector": vector,
+    points = [
+        {
+            "id": make_id(chunk, i),
+            "vector": vec,
             "payload": {
                 "text": chunk,
                 "source": file_path,
-                "chunk_id": i
-            }
-        })
+                "chunk_id": i,
+            },
+        }
+        for i, (chunk, vec) in enumerate(zip(chunks, vectors))
+    ]
 
-    if not points:
-        print("No chunks to insert")
-        return
+    for start in range(0, len(points), BATCH_SIZE):
+        batch = points[start : start + BATCH_SIZE]
+        client.upsert(COLLECTION_NAME, batch)
+        print(f"[ingest] Upserted {start + len(batch)}/{len(points)} points")
 
-    client.upsert(
-        collection_name=COLLECTION_NAME,
-        points=points
-    )
-
-    print(f"Inserted/updated {len(points)} chunks from {file_path}")
+    print(f"[ingest] Done: {len(points)} chunks from {file_path}")
