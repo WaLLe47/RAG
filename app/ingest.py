@@ -3,7 +3,8 @@ from embedding import get_embedding
 from qdrant_db import client, COLLECTION_NAME
 from chunking import split_text
 from loader import load_file
-
+#adf
+#
 
 def add_document(text: str, source: str = "manual"):
 
