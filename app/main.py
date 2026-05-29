@@ -1,46 +1,70 @@
-import os
+import sys
+import argparse
+from pathlib import Path
 
-from qdrant_db import create_collection
-from ingest import add_document, add_file
+from ingest import build_index
+from qdrant_db import recreate_collection
 from rag import build_context, generate_answer
 
 
-# 📍 Корень проекта (D:\RAG)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# 📁 путь к файлу
-DOC_PATH = os.path.join(BASE_DIR, "data", "test.docx")
-
-
-def build_db():
-
-    print("BASE_DIR =", BASE_DIR)
-    print("DOC_PATH =", DOC_PATH)
-    print("Exists =", os.path.exists(DOC_PATH))
-
-    create_collection()
+def build_db(doc_path: str) -> None:
+    print(f"[main] Создаём коллекцию и индексируем: {doc_path}")
+    recreate_collection()
+    build_index(doc_path)
+    print("[main] Индексирование завершено")
 
 
-    # 📄 загрузка файла
-    if os.path.exists(DOC_PATH):
-        add_file(DOC_PATH)
-    else:
-        print("Файл не найден, пропускаю:", DOC_PATH)
+def ask(question: str) -> None:
+    print(f"\n>>> {question}")
+
+    ctx = build_context(question)
+    print("\n=== CONTEXT ===")
+    print(ctx)
+
+    result = generate_answer(question, ctx)
+    print("\n=== ANSWER ===")
+    print(f"Ответ:      {result.answer}")
+    print(f"Confidence: {result.confidence:.2f}")
 
 
-def ask(query: str):
+def main() -> None:
+    parser = argparse.ArgumentParser(description="RAG pipeline")
+    parser.add_argument(
+        "--doc",
+        type=str,
+        default=None,
+        help="Путь к документу для индексирования (PDF/DOCX/TXT)",
+    )
+    parser.add_argument(
+        "--query",
+        type=str,
+        nargs="+",
+        default=["О чём документ?", "Кто такой Трофимов?", "Кто такая Гончарова?", "Как начать програмировать", "Кто подал заявление?" ],
+        help="Один или несколько вопросов",
+    )
+    parser.add_argument(
+        "--skip-index",
+        action="store_true",
+        help="Не переиндексировать, использовать существующую коллекцию",
+    )
+    args = parser.parse_args()
 
-    context = build_context(query)
-    answer = generate_answer(query, context)
+    if not args.skip_index:
+        if args.doc is None:
+            default = Path(__file__).parent.parent / "data" / "test.docx"
+            doc_path = str(default)
+        else:
+            doc_path = args.doc
 
-    print("\n=== ANSWER ===\n")
-    print(answer)
+        if not Path(doc_path).exists():
+            print(f"[main] Файл не найден: {doc_path}")
+            sys.exit(1)
+
+        build_db(doc_path)
+
+    for q in args.query:
+        ask(q)
 
 
 if __name__ == "__main__":
-
-    build_db()
-
-    ask("Кто такая Гончарова?")
-    ask("Как начать программировать?")
-    ask("О чем говориться в документе?")
+    main()
