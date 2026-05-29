@@ -3,44 +3,35 @@ import docx
 
 
 def load_pdf(path: str) -> str:
-    """
-    Чтение PDF файла
-    """
+    text = ""
     reader = PdfReader(path)
-    text = []
-
     for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text.append(page_text)
-
-    return "\n".join(text)
+        t = page.extract_text()
+        if t:
+            text += t + "\n"
+    return text
 
 
 def load_docx(path: str) -> str:
-    """
-    Чтение DOCX файла
-    """
     doc = docx.Document(path)
+    return "\n".join(p.text for p in doc.paragraphs if p.text)
 
-    text = []
 
-    for para in doc.paragraphs:
-        if para.text.strip():
-            text.append(para.text)
+def load_txt(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
 
-    return "\n".join(text)
+
+LOADERS = {
+    ".pdf": load_pdf,
+    ".docx": load_docx,
+    ".txt": load_txt,
+}
 
 
 def load_file(path: str) -> str:
-    """
-    Универсальная загрузка
-    """
-
-    if path.endswith(".pdf"):
-        return load_pdf(path)
-
-    if path.endswith(".docx"):
-        return load_docx(path)
-
-    raise ValueError("Unsupported file format: " + path)
+    for ext, loader in LOADERS.items():
+        if path.lower().endswith(ext):
+            return loader(path)
+    supported = ", ".join(LOADERS.keys())
+    raise ValueError(f"Unsupported format. Supported: {supported}")

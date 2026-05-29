@@ -1,40 +1,43 @@
-from uuid import uuid4
-from embedding import get_embedding
-from qdrant_db import client, COLLECTION_NAME
-from chunking import split_text
+import uuid
+
 from loader import load_file
+from chunker import chunk_text
+from embedding import get_embeddings
+from qdrant_db import client, COLLECTION_NAME
+
+BATCH_SIZE = 256
 
 
-def add_document(text: str, source: str = "manual"):
+def make_id(text: str, i: int) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{i}:{text}"))
 
-    chunks = split_text(text)
 
-    points = []
+def build_index(file_path: str) -> None:
+    text = load_file(file_path)
+    chunks = chunk_text(text)
 
-    for i, chunk in enumerate(chunks):
+    if not chunks:
+        print(f"[ingest] No chunks extracted from {file_path}")
+        return
 
-        points.append({
-            "id": str(uuid4()),
-            "vector": get_embedding(chunk),
+    vectors = get_embeddings(chunks)
+
+    points = [
+        {
+            "id": make_id(chunk, i),
+            "vector": vec,
             "payload": {
                 "text": chunk,
-                "source": source,
-                "chunk_id": i
-            }
-        })
+                "source": file_path,
+                "chunk_id": i,
+            },
+        }
+        for i, (chunk, vec) in enumerate(zip(chunks, vectors))
+    ]
 
-    client.upsert(
-        collection_name=COLLECTION_NAME,
-        points=points
-    )
+    for start in range(0, len(points), BATCH_SIZE):
+        batch = points[start : start + BATCH_SIZE]
+        client.upsert(COLLECTION_NAME, batch)
+        print(f"[ingest] Upserted {start + len(batch)}/{len(points)} points")
 
-    print(f"Inserted {len(points)} chunks from {source}")
-
-
-def add_file(path: str):
-
-    text = load_file(path)
-
-    source = path.split("/")[-1]
-
-    add_document(text, source=source)
+    print(f"[ingest] Done: {len(points)} chunks from {file_path}")
