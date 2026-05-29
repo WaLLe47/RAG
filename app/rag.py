@@ -1,22 +1,51 @@
 from search import search
 from reranker import rerank
+
 import requests
 
 
 def build_context(query: str):
 
     chunks = search(query, top_k=10)
-    top_chunks = rerank(query, chunks, top_k=3)
+
+    seen = set()
+    unique = []
+
+    for c in chunks:
+
+        norm = " ".join(c.split())
+
+        if norm not in seen:
+            seen.add(norm)
+            unique.append(c)
+
+    top_chunks = rerank(
+        query=query,
+        chunks=unique,
+        top_k=5
+    )
 
     return "\n\n".join(top_chunks)
 
 
 def generate_answer(query: str, context: str):
 
-    prompt = f"""
-Ты отвечаешь строго по контексту.
+    if not context.strip():
+        return "Нет данных"
 
-Если ответа нет — скажи "нет данных".
+    prompt = f"""
+Ты — система извлечения фактов из документа.
+
+ЗАПРЕЩЕНО:
+- придумывать информацию
+- объяснять
+- интерпретировать
+
+РАЗРЕШЕНО:
+- копировать фрагменты текста
+- кратко извлекать ответ
+
+Если ответа нет — пиши: "Нет данных"
 
 КОНТЕКСТ:
 {context}
@@ -24,7 +53,7 @@ def generate_answer(query: str, context: str):
 ВОПРОС:
 {query}
 
-ОТВЕТ:
+ОТВЕТ (строго из текста):
 """
 
     response = requests.post(
@@ -33,7 +62,7 @@ def generate_answer(query: str, context: str):
             "model": "llama3",
             "prompt": prompt,
             "stream": False,
-            "temperature": 0.1
+            "temperature": 0.0
         }
     )
 

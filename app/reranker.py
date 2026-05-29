@@ -1,14 +1,23 @@
 from sentence_transformers import CrossEncoder
 
-model = CrossEncoder("BAAI/bge-reranker-base")
+model = CrossEncoder(
+    "BAAI/bge-reranker-base"
+)
 
 
-def rerank(query: str, chunks: list, top_k: int = 3):
-    """
-    Пересортировывает чанки по релевантности
-    """
+def rerank(
+    query: str,
+    chunks: list,
+    top_k: int = 2
+):
 
-    pairs = [(query, chunk) for chunk in chunks]
+    if not chunks:
+        return []
+
+    pairs = [
+        (query, chunk)
+        for chunk in chunks
+    ]
 
     scores = model.predict(pairs)
 
@@ -18,4 +27,7 @@ def rerank(query: str, chunks: list, top_k: int = 3):
         reverse=True
     )
 
-    return [chunk for chunk, score in ranked[:top_k]]
+    return [
+        chunk
+        for chunk, score in ranked[:top_k]
+    ]
