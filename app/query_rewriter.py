@@ -1,7 +1,6 @@
 import requests
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3"
+from config import OLLAMA_URL, OLLAMA_MODEL
 
 _BAD_RESPONSES = {"нет данных", "no data", "нет", "none", "null", "не знаю", "unknown"}
 

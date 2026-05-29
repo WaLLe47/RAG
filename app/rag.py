@@ -7,9 +7,7 @@ from search import hybrid_search, vector_search
 from reranker import rerank
 from query_rewriter import rewrite_query
 from qdrant_db import client, COLLECTION_NAME
-
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3"
+from config import OLLAMA_URL, OLLAMA_MODEL
 
 # Запросы на суммаризацию — отдельный режим с другим промптом
 _SUMMARY_KEYWORDS = (

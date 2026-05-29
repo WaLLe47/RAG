@@ -566,7 +566,10 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const API = 'http://localhost:8000';
+// Пустая строка = тот же origin, по которому открыта страница.
+// Так интерфейс работает и локально, и через туннель (cloudflared/ngrok),
+// и за reverse-proxy — без правки адреса.
+const API = '';
 
 // ── state ──
 const state = {
@@ -809,27 +812,35 @@ function updateStats(data) {
 
 // ── status check ──
 async function checkStatus() {
-  // check qdrant
+  // Статус Qdrant и Ollama проверяем на стороне сервера через /api/health,
+  // чтобы это работало и при доступе по туннелю (а не только локально).
+  try {
+    const r = await fetch(`${API}/api/health`);
+    if (r.ok) {
+      const d = await r.json();
+      setDot('qdrant', d.qdrant);
+      setDot('ollama', d.ollama);
+    } else {
+      setDot('qdrant', false);
+      setDot('ollama', false);
+    }
+  } catch {
+    setDot('qdrant', false);
+    setDot('ollama', false);
+  }
+
+  // Подхватываем уже проиндексированный документ (например, после перезагрузки).
   try {
     const r = await fetch(`${API}/api/status`);
     if (r.ok) {
       const d = await r.json();
-      setDot('qdrant', true);
       if (d.indexed && !state.indexed) {
         state.indexed = true;
         showFileInfo(d.file_name, d.chunks);
         $('btn-ask').disabled = false;
       }
-    } else {
-      setDot('qdrant', false);
     }
-  } catch { setDot('qdrant', false); }
-
-  // check ollama (try /api/tags)
-  try {
-    const r = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(2000) });
-    setDot('ollama', r.ok);
-  } catch { setDot('ollama', false); }
+  } catch {}
 }
 
 function setDot(name, ok) {

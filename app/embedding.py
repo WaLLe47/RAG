@@ -1,9 +1,10 @@
 from sentence_transformers import SentenceTransformer
 
+from config import EMBEDDING_MODEL
+
 _model: SentenceTransformer | None = None
 
-MODEL_NAME = "BAAI/bge-m3"
-VECTOR_SIZE = 1024
+MODEL_NAME = EMBEDDING_MODEL
 
 
 def _get_model() -> SentenceTransformer:

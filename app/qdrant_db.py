@@ -1,10 +1,9 @@
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance
-from embedding import VECTOR_SIZE
 
-COLLECTION_NAME = "documents"
+from config import QDRANT_HOST, QDRANT_PORT, COLLECTION_NAME, VECTOR_SIZE
 
-client = QdrantClient(host="localhost", port=6333)
+client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
 
 def recreate_collection() -> None:

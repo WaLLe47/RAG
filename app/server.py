@@ -14,6 +14,7 @@ _APP_DIR = Path(__file__).parent
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
 
+import requests
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -23,6 +24,7 @@ from pydantic import BaseModel
 from ingest import build_index
 from qdrant_db import recreate_collection, client, COLLECTION_NAME
 from rag import build_context, generate_answer
+from config import OLLAMA_TAGS_URL
 
 app = FastAPI(title="RAG API", version="1.0.0")
 
@@ -68,6 +70,25 @@ def index():
     if html.exists():
         return FileResponse(str(html))
     return {"status": "RAG API running"}
+
+
+@app.get("/api/health")
+def health():
+    """Проверяет доступность Qdrant и Ollama (на стороне сервера)."""
+    qdrant_ok = True
+    try:
+        client.get_collections()
+    except Exception:
+        qdrant_ok = False
+
+    ollama_ok = True
+    try:
+        r = requests.get(OLLAMA_TAGS_URL, timeout=2)
+        ollama_ok = r.ok
+    except requests.RequestException:
+        ollama_ok = False
+
+    return {"qdrant": qdrant_ok, "ollama": ollama_ok}
 
 
 @app.get("/api/status", response_model=StatusResponse)

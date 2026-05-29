@@ -1,7 +1,9 @@
 from sentence_transformers import CrossEncoder
 
+from config import RERANKER_MODEL
+
 _model: CrossEncoder | None = None
-MODEL_NAME = "BAAI/bge-reranker-base"
+MODEL_NAME = RERANKER_MODEL
 
 
 def _get_model() -> CrossEncoder:
