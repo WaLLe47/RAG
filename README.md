@@ -23,7 +23,8 @@ Document → Chunking → Embedding → Qdrant → Retrieval → LLM → Answer
 pip install -r requirements.txt
 docker run -p 6333:6333 qdrant/qdrant
 ollama run llama3
-python app/main.py
+cd ..\RAG
+uvicorn app.server:app --reload --port 8000
 ```
 
 ## 📂 Структура
