@@ -6,12 +6,12 @@ Retrieval-Augmented Generation (RAG) система с гибридным пои
 
 - **Embeddings:** BAAI/bge-m3
 - **Vector DB:** Qdrant
-- **LLM:** Ollama (по умолчанию `llama3`)
+- **LLM:** Ollama (по умолчанию `qwen2.5:14b`)
 - **Reranker:** BAAI/bge-reranker-base (cross-encoder)
 - **Гибридный поиск:** векторный + BM25 с объединением через Reciprocal Rank Fusion
 - **Переписывание запроса** (query rewriting) перед поиском
 - **Форматы документов:** PDF, DOCX, TXT
-- **Веб-интерфейс** (FastAPI + статический фронтенд) и CLI
+- **Веб-интерфейс:** React (загрузка документа, чат, источники, статистика)
 
 ---
 
@@ -28,7 +28,7 @@ Query → Rewrite → (Vector search + BM25) → RRF → Rerank → LLM → Answ
 
 - Python **3.11–3.12** (рекомендуется: для `torch`/`sentence-transformers` есть готовые wheels)
 - Запущенный **Qdrant** (по умолчанию `localhost:6333`)
-- Запущенный **Ollama** с загруженной моделью (по умолчанию `llama3`)
+- Запущенный **Ollama** с загруженной моделью (по умолчанию `qwen2.5:14b`)
 
 ## 🚀 Установка и запуск
 
@@ -40,16 +40,13 @@ pip install -r requirements.txt
 docker run -p 6333:6333 qdrant/qdrant
 
 # 3. Ollama
-ollama pull llama3
+ollama pull qwen2.5:14b
 # ollama serve  # если сервис ещё не запущен
 
 # 4. (опционально) свои настройки
 cp .env.example .env   # отредактируйте при необходимости
-```
 
-### Вариант A — веб-интерфейс
-
-```bash
+# 5. Запуск веб-сервера
 uvicorn app.server:app --reload --port 8000
 ```
 
@@ -57,16 +54,6 @@ uvicorn app.server:app --reload --port 8000
 
 > При первом запуске модели эмбеддингов и реранкера (~несколько ГБ)
 > будут скачаны с Hugging Face — это может занять время.
-
-### Вариант B — CLI
-
-```bash
-# проиндексировать документ и задать вопросы
-python app/main.py --doc data/your_file.docx --query "О чём документ?"
-
-# использовать уже проиндексированную коллекцию (без переиндексации)
-python app/main.py --skip-index --query "Кто подал заявление?"
-```
 
 ---
 
@@ -84,7 +71,6 @@ python app/main.py --skip-index --query "Кто подал заявление?"
 app/
   config.py          — конфигурация (env переменные)
   server.py          — FastAPI сервер и REST API
-  main.py            — CLI
   loader.py          — чтение PDF/DOCX/TXT
   chunker.py         — разбиение текста на чанки
   embedding.py       — модель эмбеддингов (BGE-M3)
@@ -95,8 +81,8 @@ app/
   reranker.py        — cross-encoder переранжирование
   query_rewriter.py  — переписывание запроса через LLM
   rag.py             — сборка контекста и генерация ответа
+Interface/           — React веб-интерфейс (HTML + JSX + CSS)
 data/                — входные документы
-static/index.html    — веб-интерфейс
 ```
 
 ## 🌐 REST API

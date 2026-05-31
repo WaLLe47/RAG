@@ -1,6 +1,6 @@
 from sentence_transformers import CrossEncoder
 
-from config import RERANKER_MODEL
+from config import RERANKER_MODEL, EMBED_DEVICE
 
 _model: CrossEncoder | None = None
 MODEL_NAME = RERANKER_MODEL
@@ -9,7 +9,8 @@ MODEL_NAME = RERANKER_MODEL
 def _get_model() -> CrossEncoder:
     global _model
     if _model is None:
-        _model = CrossEncoder(MODEL_NAME)
+        # CPU по умолчанию — экономим VRAM для LLM (см. embedding.py).
+        _model = CrossEncoder(MODEL_NAME, device=EMBED_DEVICE)
     return _model
 
 

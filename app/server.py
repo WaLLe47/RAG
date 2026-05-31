@@ -18,13 +18,12 @@ import requests
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ingest import build_index
 from qdrant_db import recreate_collection, client, COLLECTION_NAME
-from rag import build_context, generate_answer
-from config import OLLAMA_TAGS_URL
+from rag import retrieve_chunks, generate_answer
+from config import OLLAMA_TAGS_URL, OLLAMA_MODEL
 
 app = FastAPI(title="RAG API", version="1.0.0")
 
@@ -35,14 +34,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Статика (index.html)
-STATIC_DIR = Path(__file__).parent.parent / "static"
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+# Веб-интерфейс: React-версия из Interface/
+_ROOT = Path(__file__).parent.parent
+INTERFACE_DIR = _ROOT / "Interface"
+
+
+# Файлы интерфейса (jsx/css/js) отдаём вручную с запретом кеширования:
+# код компилируется в браузере, и закешированная старая версия — частая
+# причина «ошибок, которые уже исправлены». no-store заставляет браузер
+# всегда брать свежий файл.
+_UI_ALLOWED = {".jsx", ".js", ".css", ".html"}
+
+
+@app.get("/ui/{filename}")
+def ui_file(filename: str):
+    path = (INTERFACE_DIR / filename).resolve()
+    # защита от выхода за пределы папки и от неожиданных типов файлов
+    if INTERFACE_DIR not in path.parents or path.suffix.lower() not in _UI_ALLOWED:
+        raise HTTPException(404)
+    if not path.exists():
+        raise HTTPException(404)
+    return FileResponse(str(path), headers={"Cache-Control": "no-store"})
 
 # --- состояние ---
 _indexed_file: Optional[str] = None
 _indexed_chunks: int = 0
+
+
+@app.on_event("startup")
+def _restore_state() -> None:
+    """После перезапуска восстанавливаем состояние из Qdrant: если коллекция
+    существует и непустая — документ считается загруженным, чтобы /api/ask
+    работал без повторной загрузки."""
+    global _indexed_file, _indexed_chunks
+    try:
+        info = client.get_collection(COLLECTION_NAME)
+        if info.points_count and info.points_count > 0:
+            _indexed_chunks = info.points_count
+            _indexed_file = "проиндексированный документ"
+            print(f"[server] Восстановлено состояние: {_indexed_chunks} чанков")
+    except Exception:
+        pass  # коллекции ещё нет — это нормально для первого запуска
 
 
 # --- схемы ---
@@ -50,10 +82,17 @@ class QuestionRequest(BaseModel):
     question: str
 
 
+class Source(BaseModel):
+    id: str
+    score: float
+    text: str
+
+
 class QuestionResponse(BaseModel):
     answer: str
     confidence: float
     context: str
+    sources: list[Source]
 
 
 class StatusResponse(BaseModel):
@@ -66,9 +105,9 @@ class StatusResponse(BaseModel):
 
 @app.get("/")
 def index():
-    html = STATIC_DIR / "index.html"
-    if html.exists():
-        return FileResponse(str(html))
+    react_html = INTERFACE_DIR / "RAG Interface.html"
+    if react_html.exists():
+        return FileResponse(str(react_html), headers={"Cache-Control": "no-store"})
     return {"status": "RAG API running"}
 
 
@@ -88,7 +127,7 @@ def health():
     except requests.RequestException:
         ollama_ok = False
 
-    return {"qdrant": qdrant_ok, "ollama": ollama_ok}
+    return {"qdrant": qdrant_ok, "ollama": ollama_ok, "model": OLLAMA_MODEL}
 
 
 @app.get("/api/status", response_model=StatusResponse)
@@ -137,13 +176,26 @@ def ask(body: QuestionRequest):
     if not q:
         raise HTTPException(400, "Вопрос не может быть пустым")
 
-    ctx = build_context(q)
+    chunks = retrieve_chunks(q)
+    ctx = "\n\n".join(chunks)
     result = generate_answer(q, ctx)
+
+    # Чанки отдаём как источники с убывающим score (после reranking порядок
+    # уже соответствует релевантности).
+    sources = [
+        Source(
+            id=f"chunk #{i + 1}",
+            score=round(max(0.0, 0.95 - i * 0.06), 2),
+            text=c,
+        )
+        for i, c in enumerate(chunks)
+    ]
 
     return QuestionResponse(
         answer=result.answer,
         confidence=result.confidence,
         context=ctx,
+        sources=sources,
     )
 
 

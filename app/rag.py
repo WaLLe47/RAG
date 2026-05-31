@@ -24,8 +24,22 @@ class RAGAnswer:
     raw: str
 
 
+# Маленькие документы целиком влезают в контекст модели — тогда retrieval
+# не нужен, отдаём весь текст в исходном порядке (надёжнее для «собирающих»
+# вопросов: перечисли всех авторов, все почты, все задачи и т.п.).
+_FULL_DOC_CHAR_LIMIT = 24000
+
+# Вопросы-перечисления: ответ собирается из многих мест документа.
+_LISTING_KEYWORDS = (
+    "все", "всех", "всем", "перечисли", "список", "сколько",
+    "каждого", "каждой", "авторов", "почты", "почту", "e-mail", "email",
+    "задач", "задачи", "задаче", "вопрос",
+)
+
+
 def _get_all_chunks() -> list[str]:
-    results = []
+    """Все чанки в ИСХОДНОМ порядке документа (сортировка по chunk_id)."""
+    points = []
     offset = None
     while True:
         resp = client.scroll(
@@ -34,12 +48,15 @@ def _get_all_chunks() -> list[str]:
             offset=offset,
             with_payload=True,
         )
-        points, next_offset = resp
-        results.extend(p.payload["text"] for p in points)
+        batch, next_offset = resp
+        points.extend(batch)
         if next_offset is None:
             break
         offset = next_offset
-    return results
+
+    # Восстанавливаем порядок документа — scroll возвращает в произвольном.
+    points.sort(key=lambda p: p.payload.get("chunk_id", 0))
+    return [p.payload["text"] for p in points]
 
 
 def _is_summary_request(query: str) -> bool:
@@ -47,29 +64,53 @@ def _is_summary_request(query: str) -> bool:
     return any(kw in q for kw in _SUMMARY_KEYWORDS)
 
 
-def build_context(query: str, use_hybrid: bool = True) -> str:
-    rewritten = rewrite_query(query)
-    print(f"[rag] rewritten: {rewritten!r}")
+def _is_listing_request(query: str) -> bool:
+    q = query.lower()
+    return any(kw in q for kw in _LISTING_KEYWORDS)
 
-    if use_hybrid:
-        all_chunks = _get_all_chunks()
-        chunks = hybrid_search(rewritten, all_chunks, top_k=25)
-    else:
-        chunks = vector_search(rewritten, top_k=25)
 
-    # Для суммаризации берём больше чанков
-    top_k = 12 if _is_summary_request(query) else 8
-    top = rerank(rewritten, chunks, top_k=top_k)
-
+def _dedup_clean(chunks: list[str]) -> list[str]:
     seen: set[str] = set()
     cleaned: list[str] = []
-    for t in top:
+    for t in chunks:
         t = " ".join(t.split())
         if len(t) > 30 and t not in seen:
             seen.add(t)
             cleaned.append(t)
+    return cleaned
 
-    return "\n\n".join(cleaned)
+
+def retrieve_chunks(query: str, use_hybrid: bool = True) -> list[str]:
+    """Возвращает список релевантных чанков (без склейки в строку)."""
+    all_chunks = _get_all_chunks()
+    total_chars = sum(len(c) for c in all_chunks)
+
+    summary = _is_summary_request(query)
+    listing = _is_listing_request(query)
+
+    # Если документ небольшой ИЛИ это обзорный/собирающий вопрос — отдаём весь
+    # документ в исходном порядке. Это решает «перечисли всех авторов / все
+    # почты / условие задачи N»: модель видит ВЕСЬ текст, ничего не теряется.
+    if total_chars <= _FULL_DOC_CHAR_LIMIT or summary or listing:
+        if total_chars <= _FULL_DOC_CHAR_LIMIT:
+            return _dedup_clean(all_chunks)
+        # Документ большой, но вопрос собирающий — берём максимум релевантного.
+        rewritten = rewrite_query(query)
+        chunks = hybrid_search(rewritten, all_chunks, top_k=40)
+        top = rerank(rewritten, chunks, top_k=24)
+        return _dedup_clean(top)
+
+    # Обычный точечный вопрос по большому документу — узкий retrieval.
+    rewritten = rewrite_query(query)
+    print(f"[rag] rewritten: {rewritten!r}")
+    chunks = hybrid_search(rewritten, all_chunks, top_k=25) if use_hybrid \
+        else vector_search(rewritten, top_k=25)
+    top = rerank(rewritten, chunks, top_k=10)
+    return _dedup_clean(top)
+
+
+def build_context(query: str, use_hybrid: bool = True) -> str:
+    return "\n\n".join(retrieve_chunks(query, use_hybrid))
 
 
 def _parse_answer(raw: str) -> tuple[str, float]:
@@ -136,9 +177,12 @@ def generate_answer(query: str, context: str) -> RAGAnswer:
                     "model": OLLAMA_MODEL,
                     "prompt": prompt,
                     "stream": False,
-                    "temperature": 0.3,
+                    "keep_alive": "30m",
+                    # num_ctx критичен: по умолчанию Ollama режет контекст до
+                    # 4096 токенов, и часть документа теряется → «ответ невпопад».
+                    "options": {"temperature": 0.3, "num_predict": 700, "num_ctx": 16384},
                 },
-                timeout=120,
+                timeout=90,
             )
             r.raise_for_status()
             raw = r.json()["response"].strip()
@@ -176,9 +220,12 @@ def generate_answer(query: str, context: str) -> RAGAnswer:
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
-                "temperature": 0.0,
+                "keep_alive": "30m",
+                # temperature должен быть внутри options, иначе Ollama его игнорирует.
+                # num_ctx — чтобы влезал весь переданный контекст (см. summary-режим).
+                "options": {"temperature": 0.0, "num_predict": 700, "num_ctx": 16384},
             },
-            timeout=60,
+            timeout=90,
         )
         r.raise_for_status()
         raw = r.json()["response"].strip()

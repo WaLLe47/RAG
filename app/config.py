@@ -30,3 +30,8 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", "1024"))
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
+
+# Устройство для эмбеддингов/реранкера. "cpu" по умолчанию, чтобы вся VRAM
+# доставалась LLM (на 16 ГБ qwen2.5:14b + модели на GPU не помещаются).
+# Поставьте EMBED_DEVICE=cuda, если у вас карта с большим объёмом памяти.
+EMBED_DEVICE = os.getenv("EMBED_DEVICE", "cpu")

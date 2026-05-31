@@ -32,9 +32,10 @@ def rewrite_query(query: str) -> str:
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
-                "temperature": 0.0,
+                "keep_alive": "30m",
+                "options": {"temperature": 0.0, "num_predict": 128},
             },
-            timeout=15,
+            timeout=20,
         )
         r.raise_for_status()
         result = r.json()["response"].strip()

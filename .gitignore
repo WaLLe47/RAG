@@ -20,9 +20,13 @@ venv/
 *.pt
 *.model
 
-# OS
+# OS / editor artifacts
 .DS_Store
 Thumbs.db
+.thumbnail
+*.backup
+Interface/screenshots/
+Interface/uploads/
 
 # logs
 *.log

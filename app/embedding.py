@@ -1,6 +1,6 @@
 from sentence_transformers import SentenceTransformer
 
-from config import EMBEDDING_MODEL
+from config import EMBEDDING_MODEL, EMBED_DEVICE
 
 _model: SentenceTransformer | None = None
 
@@ -10,7 +10,9 @@ MODEL_NAME = EMBEDDING_MODEL
 def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:
-        _model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
+        # device по умолчанию — cpu: вся VRAM остаётся под LLM (qwen2.5:14b),
+        # иначе на картах с 16 ГБ возникает CUDA out of memory.
+        _model = SentenceTransformer(MODEL_NAME, trust_remote_code=True, device=EMBED_DEVICE)
     return _model
 
 
